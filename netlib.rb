@@ -34,7 +34,7 @@ class EtherCable
   end
   def send_packet(packet,sock)
     if @log
-      puts "Frame of type #{packet[2]} from #{packet[0]} to #{packet[1]}"
+      puts "Frame of type #{packet[2]} from #{packet[0]} to #{packet[1]}. Data:"
       num_bytes=0
       packet[3].each_byte do |byte|
         byte=byte.to_s(16)
@@ -62,6 +62,8 @@ class IPDriver
     @resolved={}
     @log=log
     @packets=[]
+    @callbacks={}
+    ArpUtils.add_arp_resp(eth_sock,ip)
     eth_sock.register_callback(NetLib::ARP) do |packet|
       packet=ArpUtils::parse_arp_packet(packet)
       self.got_arp_resp(packet[2],packet[0]) if packet[3]==NetLib::ARP_RESP
@@ -69,9 +71,9 @@ class IPDriver
     eth_sock.register_callback(NetLib::IP) do |packet|
       packet=parse_ip_packet(packet)
       if @log
-        $stdout.puts "IP packet of type #{packet[0]}"
+        $stdout.puts "IP packet of type #{packet[0]} to #{@ip} from #{packet[1]}. Data:"
         num_bytes=0
-        packet[1].each_byte do |byte|
+        packet[2].each_byte do |byte|
           byte=byte.to_s(16)
           byte=byte.rjust(2,"0")
           byte="0x#{byte} "
@@ -86,7 +88,16 @@ class IPDriver
           $stdout.puts ""
         end
       end
+      if @callbacks[packet[0]]
+        @callbacks[packet[0]].each { |cback| cback.call([packet[1],packet[2]]) }
+      end
     end
+  end
+  def register_callback(type,&block)
+    if @callbacks[type]==nil
+      @callbacks[type]=[]
+    end
+    @callbacks[type].push block
   end
   def send_packet(msg,to)
     hdr=PacketFu::IPHeader.new
@@ -103,16 +114,17 @@ class IPDriver
     end
     @sock.send_packet(packet,@resolved[to],NetLib::IP)
   end
+  def got_arp_resp(ip,mac)
+    @resolved[ip]=mac
+  end
+  private
   def parse_ip_packet(packet)
     mac_header=PacketFu::EthHeader.new()
     mac_header=mac_header.to_s
     packet=packet[1]
     packet=mac_header+packet
     packet=PacketFu::IPPacket.parse packet
-    return [packet.ip_proto,packet.payload]
-  end
-  def got_arp_resp(ip,mac)
-    @resolved[ip]=mac
+    return [packet.ip_proto,packet.ip_saddr,packet.payload]
   end
 end
 
