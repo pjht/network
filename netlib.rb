@@ -1,4 +1,3 @@
-require "logger"
 require "packetfu"
 class EtherSocket
   attr_reader :mac
@@ -26,20 +25,14 @@ class EtherSocket
 end
 
 class EtherCable
-  def initialize(lfile=nil)
+  def initialize(log=false)
     @socks=[]
-    if lfile
-      @log=true
-      @logger=Logger.new(File.open(lfile,"w"))
-    else
-      @log=false
-    end
+    @log=log
   end
   def add_device(socket)
     @socks.push(socket)
   end
   def send_packet(packet,sock)
-    @logger.info "Frame of type #{packet[2]} from #{packet[0]} to #{packet[1]} with data #{packet[3]}" if @log
     puts "Frame of type #{packet[2]} from #{packet[0]} to #{packet[1]} with data #{packet[3]}" if @log
     @socks.each { |socket| next if sock==socket; socket.got_packet(packet) }
   end
