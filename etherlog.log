@@ -1,0 +1,4 @@
+I, [2018-07-22T10:40:00.146006 #44564]  INFO -- : Frame of type 0 from 00:00:00:00:00:00 to 00:00:00:00:00:01 with data hello
+I, [2018-07-22T10:40:00.147462 #44564]  INFO -- : Frame of type 0 from 00:00:00:00:00:01 to 00:00:00:00:00:00 with data hi
+I, [2018-07-22T10:40:00.147511 #44564]  INFO -- : Frame of type 0 from 00:00:00:00:00:00 to 00:00:00:00:00:02 with data hello
+I, [2018-07-22T10:40:00.147546 #44564]  INFO -- : Frame of type 0 from 00:00:00:00:00:02 to 00:00:00:00:00:00 with data hi
