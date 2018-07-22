@@ -33,30 +33,66 @@ class EtherCable
     @socks.push(socket)
   end
   def send_packet(packet,sock)
-    puts "Frame of type #{packet[2]} from #{packet[0]} to #{packet[1]} with data #{packet[3]}" if @log
+    if @log
+      puts "Frame of type #{packet[2]} from #{packet[0]} to #{packet[1]}"
+      num_bytes=0
+      packet[3].each_byte do |byte|
+        byte=byte.to_s(16)
+        byte=byte.rjust(2,"0")
+        byte="0x#{byte} "
+        print byte
+        num_bytes+=1
+        if num_bytes>16
+          puts ""
+          num_bytes=0
+        end
+      end
+      if num_bytes>0
+        puts ""
+      end
+    end
     @socks.each { |socket| next if sock==socket; socket.got_packet(packet) }
   end
 end
 
-class MyIPSocket
-  def initialize(eth_sock,ip)
+class IPDriver
+  def initialize(eth_sock,ip,log=false)
     @sock=eth_sock
     @ip=ip
     @resolved={}
+    @log=log
+    @packets=[]
     eth_sock.register_callback(NetLib::ARP) do |packet|
       packet=ArpUtils::parse_arp_packet(packet)
       self.got_arp_resp(packet[2],packet[0]) if packet[3]==NetLib::ARP_RESP
     end
     eth_sock.register_callback(NetLib::IP) do |packet|
       packet=parse_ip_packet(packet)
-      p packet
+      if @log
+        $stdout.puts "IP packet of type #{packet[0]}"
+        num_bytes=0
+        packet[1].each_byte do |byte|
+          byte=byte.to_s(16)
+          byte=byte.rjust(2,"0")
+          byte="0x#{byte} "
+          $stdout.print byte
+          num_bytes+=1
+          if num_bytes>16
+            $stdout.puts ""
+            num_bytes=0
+          end
+        end
+        if num_bytes>0
+          $stdout.puts ""
+        end
+      end
     end
   end
   def send_packet(msg,to)
     hdr=PacketFu::IPHeader.new
     hdr.ip_saddr=@ip
     hdr.ip_daddr=to
-    hdr.ip_proto=21
+    hdr.ip_proto=254
     packet=hdr.to_s+msg
     if !@resolved[to]
       ArpUtils.send_arp(@sock,to)
@@ -73,7 +109,7 @@ class MyIPSocket
     packet=packet[1]
     packet=mac_header+packet
     packet=PacketFu::IPPacket.parse packet
-    return packet.payload
+    return [packet.ip_proto,packet.payload]
   end
   def got_arp_resp(ip,mac)
     @resolved[ip]=mac
@@ -86,12 +122,21 @@ class NetLib
   ARP_RESP=2
   ARP_REQ=1
 end
+
 class ArpUtils
+  @@log_arp=false
+  def self.log_arp=(val)
+    @@log_arp=val
+  end
+  def self.log_arp(val)
+    return @@log_arp
+  end
   def self.add_arp_resp(device,ip)
     device.register_callback(NetLib::ARP) do |packet|
       packet=parse_arp_packet(packet)
       if packet[3]==NetLib::ARP_REQ and packet[1]==ip
         hdr=PacketFu::ARPHeader.new()
+        puts "ARP request from #{packet[0]} for IP #{packet[1]}" if @@log_arp
         hdr.arp_daddr_mac=packet[0]
         hdr.arp_saddr_mac=device.mac
         hdr.arp_saddr_ip=packet[1]
@@ -99,6 +144,7 @@ class ArpUtils
         hdr.arp_opcode=NetLib::ARP_RESP
         hdr=hdr.to_s
         device.send_packet(hdr,packet[0],2054)
+        puts "ARP response about #{packet[1]} from #{device.mac}" if @@log_arp
       end
     end
   end
