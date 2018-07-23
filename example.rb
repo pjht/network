@@ -18,8 +18,6 @@ ipdriv3.register_callback(254) do |from,data|
 end
 numb_to_ip={"1"=>"192.168.0.34","2"=>"192.168.0.40","3"=>"192.168.0.56"}
 numb_to_driv={"1"=>ipdriv1,"2"=>ipdriv2,"3"=>ipdriv3}
-# ipdriv1.send_packet("Hello","192.168.0.56")
-# ipdriv2.send_packet("Hi","192.168.0.56")
 while true
   print "From(1,2,or 3):"
   from=numb_to_driv[gets.chomp]
