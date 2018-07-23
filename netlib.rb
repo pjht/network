@@ -139,7 +139,7 @@ class UDPDriver
     driv.register_callback(NetLib::UDP) do |from,data|
       packet=parse_udp_packet(data)
       if @log
-        $stdout.puts "UDP packet from #{from}:#{packet[0]} on port #{packet[1]}. Data:"
+        $stdout.puts "UDP datagram from #{from}:#{packet[0]} on port #{packet[1]}. Data:"
         num_bytes=0
         packet[2].each_byte do |byte|
           byte=byte.to_s(16)
