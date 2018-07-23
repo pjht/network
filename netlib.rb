@@ -99,12 +99,14 @@ class IPDriver
     end
     @callbacks[type].push block
   end
-  def send_packet(msg,to)
-    hdr=PacketFu::IPHeader.new
-    hdr.ip_saddr=@ip
-    hdr.ip_daddr=to
-    hdr.ip_proto=254
-    packet=hdr.to_s+msg
+  def send_packet(msg,to,proto)
+    packet=PacketFu::IPHeader.new
+    packet.ip_saddr=@ip
+    packet.ip_daddr=to
+    packet.ip_proto=proto
+    packet.body=msg
+    packet.ip_recalc
+    packet=packet.to_s
     if !@resolved[to]
       ArpUtils.send_arp(@sock,to)
       blah=0
@@ -123,14 +125,70 @@ class IPDriver
     mac_header=mac_header.to_s
     packet=packet[1]
     packet=mac_header+packet
-    packet=PacketFu::IPPacket.parse packet
+    ip_packet=PacketFu::IPPacket.new
+    packet=ip_packet.read(packet)
     return [packet.ip_proto,packet.ip_saddr,packet.payload]
+  end
+end
+
+class UDPDriver
+  def initialize(driv,log=false)
+    @driver=driv
+    @log=log
+    @callbacks=[]
+    driv.register_callback(NetLib::UDP) do |from,data|
+      packet=parse_udp_packet(data)
+      if @log
+        $stdout.puts "UDP packet from #{from}:#{packet[0]} on port #{packet[1]}. Data:"
+        num_bytes=0
+        packet[2].each_byte do |byte|
+          byte=byte.to_s(16)
+          byte=byte.rjust(2,"0")
+          byte="0x#{byte} "
+          $stdout.print byte
+          num_bytes+=1
+          if num_bytes>16
+            $stdout.puts ""
+            num_bytes=0
+          end
+        end
+        if num_bytes>0
+          $stdout.puts ""
+        end
+      end
+      if @callbacks[packet[0]]
+        @callbacks[packet[0]].each { |cback| cback.call(from,packet[0],packet[1],packet[2]) }
+      end
+      if @callbacks[65536]
+        @callbacks[65536].each { |cback| cback.call(from,packet[0],packet[1],packet[2]) }
+      end
+    end
+  end
+  def register_callback(type=65536,&block)
+    if @callbacks[type]==nil
+      @callbacks[type]=[]
+    end
+    @callbacks[type].push block
+  end
+  def send_packet(data,to_ip,from_port,to_port)
+    packet=PacketFu::UDPHeader.new
+    packet.udp_src=from_port
+    packet.udp_dst=to_port
+    packet.body=data
+    packet.udp_recalc
+    packet=packet.to_s
+    @driver.send_packet(packet,to_ip,NetLib::UDP)
+  end
+  def parse_udp_packet(packet)
+    packet=PacketFu::UDPHeader.new.read(packet)
+    return [packet.udp_src,packet.udp_dst,packet.body]
   end
 end
 
 class NetLib
   ARP=0x0806
   IP=0x0800
+  UDP=17
   ARP_RESP=2
   ARP_REQ=1
 end
