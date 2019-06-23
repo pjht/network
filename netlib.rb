@@ -25,31 +25,28 @@ class EtherSocket
 end
 
 class EtherCable
-  def initialize(log=false)
+  def initialize(log=false,file=nil,clear=false)
     @socks=[]
     @log=log
+    @file=file
+    PacketFu::PcapFile.new.write(file) if clear
   end
   def add_device(socket)
     @socks.push(socket)
   end
   def send_packet(packet,sock)
     if @log
-      puts "Frame of type #{packet[2]} from #{packet[0]} to #{packet[1]}. Data:"
-      num_bytes=0
-      packet[3].each_byte do |byte|
-        byte=byte.to_s(16)
-        byte=byte.rjust(2,"0")
-        byte="0x#{byte} "
-        print byte
-        num_bytes+=1
-        if num_bytes>16
-          puts ""
-          num_bytes=0
-        end
+      pkt = PacketFu::EthPacket.new
+      pkt.eth_saddr=packet[0]
+      pkt.eth_daddr=packet[1]
+      pkt.eth_proto=packet[2]
+      pkt=PacketFu::Packet.parse(pkt.to_s+packet[3])
+      p pkt
+      if @file
+        PacketFu::PcapFile.new().array_to_file({:file=>@file,:array=>[pkt],:append=>true})
       end
-      if num_bytes>0
-        puts ""
-      end
+      # puts "Frame of type #{packet[2]} from #{packet[0]} to #{packet[1]}. Data:"
+      # NetLib::show_data(packet[3])
     end
     @socks.each { |socket| next if sock==socket; socket.got_packet(packet) }
   end
@@ -66,27 +63,13 @@ class IPDriver
     ArpUtils.add_arp_resp(eth_sock,ip)
     eth_sock.register_callback(NetLib::ARP) do |packet|
       packet=ArpUtils::parse_arp_packet(packet)
-      self.got_arp_resp(packet[2],packet[0]) if packet[3]==NetLib::ARP_RESP
+      @resolved[packet[2]]=packet[0] if packet[3]==NetLib::ARP_RESP
     end
     eth_sock.register_callback(NetLib::IP) do |packet|
       packet=parse_ip_packet(packet)
       if @log
         $stdout.puts "IP packet of type #{packet[0]} to #{@ip} from #{packet[1]}. Data:"
-        num_bytes=0
-        packet[2].each_byte do |byte|
-          byte=byte.to_s(16)
-          byte=byte.rjust(2,"0")
-          byte="0x#{byte} "
-          $stdout.print byte
-          num_bytes+=1
-          if num_bytes>16
-            $stdout.puts ""
-            num_bytes=0
-          end
-        end
-        if num_bytes>0
-          $stdout.puts ""
-        end
+        NetLib::show_data(packet[2])
       end
       if @callbacks[packet[0]]
         @callbacks[packet[0]].each { |cback| cback.call([packet[1],packet[2]]) }
@@ -116,9 +99,6 @@ class IPDriver
     end
     @sock.send_packet(packet,@resolved[to],NetLib::IP)
   end
-  def got_arp_resp(ip,mac)
-    @resolved[ip]=mac
-  end
   private
   def parse_ip_packet(packet)
     mac_header=PacketFu::EthHeader.new()
@@ -135,29 +115,15 @@ class UDPDriver
   def initialize(driv,log=false)
     @driver=driv
     @log=log
-    @callbacks=[]
+    @callbacks={}
     driv.register_callback(NetLib::UDP) do |from,data|
       packet=parse_udp_packet(data)
       if @log
         $stdout.puts "UDP datagram from #{from}:#{packet[0]} on port #{packet[1]}. Data:"
-        num_bytes=0
-        packet[2].each_byte do |byte|
-          byte=byte.to_s(16)
-          byte=byte.rjust(2,"0")
-          byte="0x#{byte} "
-          $stdout.print byte
-          num_bytes+=1
-          if num_bytes>16
-            $stdout.puts ""
-            num_bytes=0
-          end
-        end
-        if num_bytes>0
-          $stdout.puts ""
-        end
+        NetLib::show_data(packet[2])
       end
-      if @callbacks[packet[0]]
-        @callbacks[packet[0]].each { |cback| cback.call(from,packet[0],packet[1],packet[2]) }
+      if @callbacks[packet[1]]
+        @callbacks[packet[1]].each { |cback| cback.call(from,packet[0],packet[2]) }
       end
       if @callbacks[65536]
         @callbacks[65536].each { |cback| cback.call(from,packet[0],packet[1],packet[2]) }
@@ -184,13 +150,140 @@ class UDPDriver
     return [packet.udp_src,packet.udp_dst,packet.body]
   end
 end
-
+class TCPDriver
+  def initialize(device,log=false)
+    @device=device
+    @log=log
+    @connections=[]
+    device.register_callback(NetLib::TCP) do |from,data|
+      packet,new_conn=parse_tcp_packet(from,data)
+      if @log
+        seq=packet[4][:last_seq]
+        ack=packet[4][:last_ack]
+        flags=flags_to_str(packet[2])
+        str=""
+        str="Data:" if packet[3].size>0
+        $stdout.puts "TCP packet from #{from}:#{packet[0]} on port #{packet[1]}. Flags:#{flags} SEQ:#{seq} ACK:#{ack} #{str}"
+        NetLib::show_data(packet[3])
+      end
+      if new_conn
+        send_packet({:syn=>true,:ack=>true},packet[1])
+      else
+        unless packet[2].ack==1 and packet[2].syn==0
+          send_packet({:ack=>true},packet[1])
+        end
+      end
+    end
+  end
+  def connect(from_port,to_port,to_ip)
+    connection={}
+    connection[:from_port]=from_port
+    connection[:last_ack]=0
+    connection[:last_seq]=-1
+    connection[:to_ip]=to_ip
+    @connections[to_port]=connection
+    send_packet({:syn=>true},to_port)
+  end
+  def send_packet(flags,to_port,data=nil)
+    connection=@connections[to_port]
+    packet=PacketFu::TCPHeader.new
+    packet.tcp_src=connection[:from_port]
+    packet.tcp_dst=to_port
+    packet.tcp_seq=connection[:last_ack]
+    if data
+      size=data.bytesize
+    else
+      size=1
+    end
+    packet.tcp_ack=connection[:last_seq]+size
+    packet.tcp_flags=PacketFu::TcpFlags.new(flags)
+    if data
+      packet.body=data
+    end
+    packet.tcp_recalc
+    packet=packet.to_s
+    @device.send_packet(packet,connection[:to_ip],NetLib::TCP)
+  end
+  def parse_tcp_packet(from,packet)
+    packet=PacketFu::TCPHeader.new.read(packet)
+    to_port=packet.tcp_dst
+    connection=@connections[to_port]
+    new_conn=false
+    if !connection
+      connection={}
+      connection[:from_port]=packet.tcp_src
+      connection[:to_ip]=from
+      new_conn=true
+    end
+    connection[:last_seq]=packet.tcp_seq
+    connection[:last_ack]=packet.tcp_ack
+    @connections[to_port]=connection
+    return [packet.tcp_src,packet.tcp_dst,packet.tcp_flags,packet.body,connection],new_conn
+  end
+  def flags_to_str(flag_data)
+    flags=""
+    if flag_data.syn==1
+      flags+="SYN "
+    end
+    if flag_data.ack==1
+      flags+="ACK "
+    end
+    if flag_data.fin==1
+      flags+="FIN "
+    end
+    if flag_data.psh==1
+      flags+="PSH "
+    end
+    if flag_data.rst==1
+      flags+="RST "
+    end
+    flags=flags.chop
+    return flags
+  end
+end
+class TCPSocket
+  def initialize(driver,dst_ip,port)
+    @driver=driver
+    @src_port=rand(3000..6000)
+    @dst_port=port
+    @dst_ip=dst_ip
+    @driver.connect(@src_port,@dst_port,dst_ip)
+  end
+  def send(msg)
+    @driver.send_packet({:psh=>true,:ack=>true},@dst_port,msg);
+  end
+end
+class TCPServer
+  def initialize(driver,ip,port)
+    @driver=driver
+    @port=port
+    @ip=ip
+  end
+end
 class NetLib
   ARP=0x0806
   IP=0x0800
   UDP=17
+  TCP=6
   ARP_RESP=2
   ARP_REQ=1
+  def self.show_data(data)
+    num_bytes=0
+    data.each_byte do |byte|
+      byte=byte.to_s(16)
+      byte=byte.rjust(2,"0")
+      byte="0x#{byte} "
+      $stdout.print byte
+      num_bytes+=1
+      if num_bytes>16
+        $stdout.puts ""
+        num_bytes=0
+      end
+    end
+    if num_bytes>0
+      $stdout.puts ""
+    end
+  end
 end
 
 class ArpUtils
@@ -198,7 +291,7 @@ class ArpUtils
   def self.log_arp=(val)
     @@log_arp=val
   end
-  def self.log_arp(val)
+  def self.log_arp()
     return @@log_arp
   end
   def self.add_arp_resp(device,ip)

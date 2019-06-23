@@ -1,6 +1,6 @@
 require_relative "netlib.rb"
 ArpUtils.log_arp=true
-cable=EtherCable.new()
+cable=EtherCable.new(true,"cap.pcapng",true)
 dev1=EtherSocket.new(cable,"d2:f5:8a:c4:22:56")
 dev2=EtherSocket.new(cable,"d2:f5:8a:22:65:4c")
 dev3=EtherSocket.new(cable,"d2:f5:8a:34:6d:7e")

@@ -1,6 +1,7 @@
 GEM
   remote: https://rubygems.org/
   specs:
+    bindata (2.4.3)
     packetfu (1.1.13)
       pcaprub
     pcaprub (0.12.4)
@@ -9,6 +10,7 @@ PLATFORMS
   ruby
 
 DEPENDENCIES
+  bindata
   packetfu
 
 BUNDLED WITH
